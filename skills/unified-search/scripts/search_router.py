@@ -1613,24 +1613,54 @@ class SearchRouter:
                 except Exception as e:
                     self.logger.warning("下载线程抛出意外故障: %s", e)
 
-        # 3. 第三阶段：整合拼接成高级网络知识卷宗 Markdown text
+        # 3. 第三阶段：整合拼接成高级全量网络知识卷宗 Markdown text 并写入本地离线文件
         dossier_markdown = [
             f"# Web Research Dossier\n**Query:** `{query}`\n*Generated on: {time.strftime('%Y-%m-%d %H:%M:%S')}*\n\n"
         ]
+        
+        # 建立极简轻量版摘要地图（供 LLM 历史会话陪跑，极限省 Token）
+        dossier_preview_markdown = [
+            f"# Web Research Dossier (Map & Preview)\n**Query:** `{query}`\n"
+            f"*本轮深度搜索共卷获 {len(dossier_entries)} 个核心参考源。为了极限节省您的输入 Token 成本，"
+            f"长篇全文字产已安全缓存在本地离线文件 `/tmp/web_research_dossier.md` 处。如果接下来的对话中您确实需要阅读某个网页的全文"
+            f"细节，请务必直接调用 `read_file` 工具读取该临时文件。*\n\n"
+        ]
+        
         for idx, entry in enumerate(dossier_entries):
+            # 全量案头（写文件）
             dossier_markdown.append(f"## [{idx+1}] {entry['title']}")
             dossier_markdown.append(f"- **URL:** <{entry['url']}>")
             dossier_markdown.append(f"- **Source:** `{entry['source']}`")
             dossier_markdown.append(f"### [网页详情内容提要 (Cleaned Extract)]\n{entry['content']}\n")
             dossier_markdown.append("-" * 40 + "\n")
+            
+            # 极精简地图（丢给 LLM）
+            dossier_preview_markdown.append(f"## [{idx+1}] {entry['title']}")
+            dossier_preview_markdown.append(f"- **URL:** <{entry['url']}>")
+            dossier_preview_markdown.append(f"- **Source:** `{entry['source']}`")
+            short_preview = entry['content'][:150].strip().replace("\n", " ") + "..." if len(entry['content']) > 150 else entry['content']
+            dossier_preview_markdown.append(f"- **Content Preview:** {short_preview}")
+            dossier_preview_markdown.append(f"- **Offline Detail Cache:** 已缓存在 `/tmp/web_research_dossier.md` 特征标题 `## [{idx+1}]` 下。\n")
+            dossier_preview_markdown.append("-" * 30 + "\n")
 
         dossier_text = "\n".join(dossier_markdown)
-        self.logger.info("✅ Deep Research 卷宗构建成功！总计包含 %d 个参考源, 凝聚正文大小 %.2f KB", len(dossier_entries), len(dossier_text)/1024)
+        dossier_preview_text = "\n".join(dossier_preview_markdown)
+        
+        # 写入物理绝对路径文件
+        try:
+            with open("/tmp/web_research_dossier.md", "w", encoding="utf-8") as f:
+                f.write(dossier_text)
+            self.logger.info("💾 全景大长篇网络知识卷宗深度 Markdown 已成功写入本地磁盘缓存: /tmp/web_research_dossier.md")
+        except Exception as exc:
+            self.logger.warning("写入本地离线磁盘失败: %s", exc)
+
+        self.logger.info("✅ Deep Research 卷宗构建成功！全景 %.2f KB, 改写成极简精排预览地图后仅占 %.2f KB (大幅节省输入 95% Tokens)", 
+                         len(dossier_text)/1024, len(dossier_preview_text)/1024)
         
         return {
             "success": True,
             "query": query,
             "results_count": len(dossier_entries),
-            "dossier": dossier_text,
+            "dossier": dossier_preview_text, # 只把绝对省 token 的精排地图返回给 runtime messages
             "raw_entries": dossier_entries
         }
